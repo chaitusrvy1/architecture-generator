@@ -2,6 +2,7 @@ import logging
 from fastapi import FastAPI
 from app.api.routes import router as architecture_router
 from app.core.config import settings
+from app.core.lifespan import lifespan
 
 # Configure basic logging
 logging.basicConfig(
@@ -12,7 +13,8 @@ logging.basicConfig(
 app = FastAPI(
     title=settings.app_name,
     description="API for generating MermaidJS architecture diagrams from user requirements and Cosmos DB data.",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Include routers

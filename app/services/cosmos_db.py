@@ -2,6 +2,8 @@ import logging
 from azure.cosmos import CosmosClient, exceptions
 from app.core.config import settings
 
+from app.core.lifespan import state
+
 logger = logging.getLogger(__name__)
 
 # Realistic Patent-related Mock Data
@@ -42,6 +44,7 @@ async def get_invention_details(invention_id: str) -> dict:
     """
     Fetches invention details from Cosmos DB with a focus on patent-related information.
     """
+    # 1. Check if we should use mock data
     if not settings.cosmos_db_endpoint or "mock" in settings.cosmos_db_endpoint:
         logger.info(f"Using mock patent data for ID: {invention_id}")
         return MOCK_DB.get(invention_id, {
@@ -50,11 +53,25 @@ async def get_invention_details(invention_id: str) -> dict:
             "components": ["Generic Frontend", "Processing Layer", "Database"]
         })
 
-    try:
-        client = CosmosClient(settings.cosmos_db_endpoint, settings.cosmos_db_key)
-        database = client.get_database_client(settings.cosmos_db_database_name)
-        container = database.get_container_client(settings.cosmos_db_container_name)
-        return container.read_item(item=invention_id, partition_key=invention_id)
-    except Exception as e:
-        logger.error(f"Cosmos DB lookup failed: {str(e)}. Falling back to mock.")
-        return MOCK_DB.get(invention_id, {"title": "Fallback System", "components": ["App", "API", "DB"]})
+    # 2. Use the shared container if available
+    container = state.cosmos_container
+    
+    # 3. Fallback to local client if lifespan didn't initialize it (e.g. in tests)
+    if not container:
+        try:
+            logger.info("Initializing ad-hoc Cosmos client (lifespan state not found)")
+            client = CosmosClient(settings.cosmos_db_endpoint, settings.cosmos_db_key)
+            database = client.get_database_client(settings.cosmos_db_database_name)
+            container = database.get_container_client(settings.cosmos_db_container_name)
+        except Exception as e:
+            logger.error(f"Failed to initialize ad-hoc Cosmos client: {str(e)}")
+
+    if container:
+        try:
+            return container.read_item(item=invention_id, partition_key=invention_id)
+        except exceptions.CosmosResourceNotFoundError:
+            logger.warning(f"Invention {invention_id} not found in Cosmos DB. Falling back to mock.")
+        except Exception as e:
+            logger.error(f"Cosmos DB lookup failed: {str(e)}. Falling back to mock.")
+            
+    return MOCK_DB.get(invention_id, {"title": "Fallback System", "components": ["App", "API", "DB"]})
